@@ -22,13 +22,14 @@ class QuantumCircuitEnv:
        action_effect[action % self.state_dim] += 0.2
        
        noise = np.random.normal(0,0.05,size = self.state_dim)
-       self.temp_state  = np.clip(self.state + noise,0,1)
-       self.state = self.temp_state / np.sum(self.temp_state)
+       self.temp_state  = np.clip(self.state + action_effect + noise,0,1)
+       state_sum = np.sum(self.temp_state)
+       self.state = self.temp_state / state_sum if state_sum > 0 else np.ones(self.state_dim) / self.state_dim
        
        target_state  = np.zeros(self.state_dim)
        target_state[0] = 1.0
        
-       reward = np.dot(self.state,target_state)
+       reward = float(np.dot(self.state,target_state))
        done = self.current_step >= self.max_depth
        
        return torch.tensor(self.state,dtype = torch.float32),reward,done

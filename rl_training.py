@@ -29,29 +29,31 @@ print("=======================================================")
 for episodes in range(0,EPISODES):
     state = env.reset()
     if (isinstance(state,torch.Tensor)):
-        state = state.numpy().flatten()
-    else: np.array(state).flatten()
+        state = state.detach().cpu().numpy().flatten()
+    else: state = np.array(state).flatten()
     total_reward = 0.0
     done = False
+    loss = 0.0
     
     while not done:
         action = agent.select_action(state,epsilon)
         next_state,reward,done = env.step(action)
         
-        if (isinstance(state,torch.Tensor)):
-            next_state = next_state.numpy().flatten()
-        else: np.array(next_state).flatten() 
+        if (isinstance(next_state,torch.Tensor)):
+            next_state = next_state.detach().cpu().numpy().flatten()
+        else: next_state = np.array(next_state).flatten() 
             
         agent.memory.push(state,action,reward,next_state,done)
         loss = agent.update(BATCH_SIZE)
         state = next_state
         total_reward += reward
     
-    epislon = max(EPSILON_END , epsilon * EPSILON_DECAY)
+    epsilon = max(EPSILON_END , epsilon * EPSILON_DECAY)
     
     if episodes % SYNC_TARGET_EVERY == 0:
         agent.update_target_network()
-        print(f"Episode {episodes:3d}/{EPISODES} | Total Reward: {total_reward:.4f} | Epsilon: {epsilon:.3f} | Last Loss: {loss:.5f}")
+        loss_val = loss.item() if isinstance(loss, torch.Tensor) else (loss if loss is not None else 0.0)
+        print(f"Episode {episodes:3d}/{EPISODES} | Total Reward: {total_reward:.4f} | Epsilon: {epsilon:.3f} | Last Loss: {loss_val:.5f}")
 
 
 torch.save(agent.policy_net.state_dict(), "dueling_dqn_quantum.pt")

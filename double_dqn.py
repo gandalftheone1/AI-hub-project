@@ -28,8 +28,9 @@ class DuelingDQN(nn.Module):
         return val + (adv - adv.mean(dim=-1, keepdim = True))
 
 class ReplayBuffer:
-    def __init__(self,capacity: int = 10000):
+    def __init__(self,capacity: int = 10000,device: torch.device = torch.device("cpu")):
         self.buffer = deque(maxlen = capacity)
+        self.device = device
         
     def push(self,state,action,reward,next_state,done):
         self.buffer.append((state,action,reward,next_state,done))
@@ -38,39 +39,46 @@ class ReplayBuffer:
         state,action,reward,next_state,done = zip(*random.sample(self.buffer,batch_size))
 
         def to_float_tensor(data_list):
-            cleaned = [s.numpy().flatten() if isinstance(s,torch.Tensor) else np.array(s).flatten() for s in data_list]
-            return torch.tensor(np.array(cleaned),dtype = torch.float32)
+            cleaned = [s.detach().cpu().numpy().flatten() if isinstance(s,torch.Tensor) else np.array(s).flatten() for s in data_list]
+            return torch.tensor(np.array(cleaned),dtype = torch.float32,device = self.device)
         
         return(
         to_float_tensor(state),
-        torch.tensor(action,dtype = torch.float32),
-        torch.tensor(reward,dtype = torch.float32),
+        torch.tensor(action,dtype = torch.long, device = self.device),
+        torch.tensor(reward,dtype = torch.float32,device = self.device),
         to_float_tensor(next_state),
-        torch.tensor(done,dtype = torch.bool) 
+        torch.tensor(done,dtype = torch.bool,device = self.device) 
     )
     
     def __len__(self):
         return len(self.buffer)
     
 class DQNAgent:
-    def __init__(self,state_dim: int,action_dim: int,lr: float = 1e-3,gamma: float = 0.99,buffer_capacity: int = 10000):
+    def __init__(self,state_dim: int,action_dim: int,lr: float = 1e-3,gamma: float = 0.99,buffer_capacity: int = 10000,device: torch.device = None):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.gamma = gamma
+        self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        self.policy_net = DuelingDQN(state_dim,action_dim)
-        self.target_net = DuelingDQN(state_dim,action_dim)
+        self.policy_net = DuelingDQN(state_dim,action_dim).to(self.device)
+        self.target_net = DuelingDQN(state_dim,action_dim).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
         self.optimizer = optim.Adam(self.policy_net.parameters(),lr = lr)
-        self.memory = ReplayBuffer(buffer_capacity)
+        self.memory = ReplayBuffer(buffer_capacity,device = self.device)
         
     def select_action(self,state: np.ndarray,epsilon: float)->int:
         
         if (random.random() < epsilon):
             return (random.randint(0,self.action_dim-1))
         
-        state_t = torch.tensor(state,dtype  = torch.float32).unsqueeze(0)
+        if isinstance(state, torch.Tensor):
+            state_t = state.to(self.device, dtype=torch.float32)
+            if state_t.dim() == 1:
+                state_t = state_t.unsqueeze(0)
+        else:
+            state_t = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
+            
         with torch.no_grad():
             q_values = self.policy_net(state_t)
             return torch.argmax(q_values,dim = 1).item()
@@ -83,7 +91,6 @@ class DQNAgent:
         states,action,rewards,next_states,dones = self.memory.sample(batch_size)
         
         q_values = self.policy_net(states)
-        action = action.to(torch.long)
         state_action_values = q_values.gather(1,action.unsqueeze(1)).squeeze(1)
         
         with torch.no_grad():

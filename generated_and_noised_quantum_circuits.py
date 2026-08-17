@@ -78,7 +78,7 @@ def from_qbits_to_probability_vector(counts: dict,num_qubits: int, shots: int=10
     prob_vector=np.zeros(vector_size,dtype=np.float32)
     
     for bitestring, count in counts.items():
-        idx = int(bitestring,2)
+        idx = int(bitestring[::-1],2)
         prob_vector[idx]=count/shots
         
     return prob_vector
@@ -111,13 +111,13 @@ def quantum_circuit_generator(samples: int,num_qubits: int,max_depth: int,shots:
         if(i+1) % 200==0:
             print(f" --> Ολοκληρώθηκαν  {i+1}/{samples} δείγματα ")
         
-        noise_tensor=torch.tensor(np.array(noise_circuits),dtype = torch.float32)
-        no_noise_tensor=torch.tensor(np.array(no_noise_circuits),dtype = torch.float32)  
+    noise_tensor=torch.tensor(np.array(noise_circuits),dtype = torch.float32)
+    no_noise_tensor=torch.tensor(np.array(no_noise_circuits),dtype = torch.float32)  
     
     return noise_tensor,no_noise_tensor    
 
 def main():
-    eg_samples=1000
+    eg_samples=5000
     eg_num_qubits=4
     eg_max_depth=8
     eg_batch_size=32

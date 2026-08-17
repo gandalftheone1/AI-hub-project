@@ -7,7 +7,7 @@ from qiskit_nature.second_q.drivers import PySCFDriver
 from qiskit_nature.second_q.mappers import JordanWignerMapper
 from generated_and_noised_quantum_circuits import quantum_circuit_generator
 
-eg_samples=1000
+eg_samples=5000
 eg_num_qubits=4
 eg_max_depth=8
 eg_batch_size=32
@@ -109,17 +109,18 @@ h2_matrix = hamiltonian_energy_matrix_for_h2(bond_distance = 0.735)
 h2_diag_energies = torch.tensor(h2_matrix,dtype = torch.float32)
 
 def energy_calculator(prob_vector: torch.Tensor,energies_vector: torch.Tensor = h2_diag_energies)->torch.Tensor:
-    
+   if isinstance(energies_vector, np.ndarray):
+        energies_vector = torch.tensor(energies_vector, dtype=torch.float32)
    energies = energies_vector.to(prob_vector.device)
-   if (prob_vector.dim == 1): return torch.sum(prob_vector * energies)
+   
+   if (prob_vector.dim() == 1): return torch.sum(prob_vector * energies)
    else: return torch.sum(prob_vector * energies,dim=-1)
    
 def chemical_accuracy_evaluation(pred_vector: torch.Tensor, real_vector: torch.Tensor):
-    
     pred_energies = energy_calculator(pred_vector)
     real_energies = energy_calculator(real_vector)
     
-    abs_errors = np.abs(pred_energies-real_energies)
+    abs_errors = torch.abs(pred_energies-real_energies)
     chem_limit = 0.0016
     
     accurate_samples = (abs_errors <= chem_limit).sum().item() 
