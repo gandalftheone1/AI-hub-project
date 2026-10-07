@@ -9,30 +9,30 @@ from qiskit import transpile
 def get_QuEra_noise_model(config_quera_noise_factor: float = 1.0) -> NoiseModel:
     quera_noise_model = NoiseModel()
     
-    p_reset = 0.004 * config_quera_noise_factor   #0.4% chance of not getting back to the |0>-initial condition
-    error_reset = pauli_error([("X", p_reset), ("I", 1 - p_reset)])    #with p_reset we have a chance of the X-gate application and with 1-p_reset the I-gate
+    p_reset = 0.004 * config_quera_noise_factor   
+    error_reset = pauli_error([("X", p_reset), ("I", 1 - p_reset)])    
     quera_noise_model.add_all_qubit_quantum_error(error_reset, "reset")
 
     p_meas = 0.003 * config_quera_noise_factor
-    error_meas = pauli_error([("X", p_meas), ("I", 1 - p_meas)])   #0.3% chance of reading the condition wrong
+    error_meas = pauli_error([("X", p_meas), ("I", 1 - p_meas)])   
     quera_noise_model.add_all_qubit_quantum_error(error_meas, "measure")
 
    
-    p_cz_active_qub = 0.005 * config_quera_noise_factor   #0.5% chance of appplying a 2-qbit gate in an entagled situation
+    p_cz_active_qub = 0.005 * config_quera_noise_factor  
     cz_single_qubit_error = pauli_error(
         [
-            ("X", 1 / 4 * p_cz_active_qub),   #different chances of applications among gates
+            ("X", 1 / 4 * p_cz_active_qub),  
             ("Y", 1 / 4 * p_cz_active_qub),
             ("Z", 1 / 2 * p_cz_active_qub),
             ("I", 1 - p_cz_active_qub),
         ]
     )
-    cz_error = cz_single_qubit_error.tensor(cz_single_qubit_error)   #tensor product-"tensored error"
+    cz_error = cz_single_qubit_error.tensor(cz_single_qubit_error)   
     quera_noise_model.add_all_qubit_quantum_error(    
         cz_error, ["cx", "ecr", "cz"]
     )
     
-    p_u1 = 5e-4 * config_quera_noise_factor   #different errors,based on the complexity of the gates
+    p_u1 = 5e-4 * config_quera_noise_factor   
     p_u2 = 1e-3 * config_quera_noise_factor
     p_u3 = 1.5e-3 * config_quera_noise_factor
 
@@ -87,11 +87,9 @@ def quantum_circuit_generator(samples: int,num_qubits: int,max_depth: int,shots:
     no_noise_circuits=[]
     basis_gates=['cx', 'id', 'rz', 'sx', 'x', 'cz', 'u1', 'u2', 'u3']
     
-    print(f" Έναρξη παραγωγής {samples} δειγμάτων για {num_qubits} qubits:")
-    
     no_noise_sim=AerSimulator()
     for i in range(samples):
-        random_depth=np.random.randint(1,max_depth)  #depth=number of concecutive quantum gates-not in parallel
+        random_depth=np.random.randint(1,max_depth)  
         qc=random_circuit(num_qubits = num_qubits,depth = random_depth,measure = True)
         qc_transpiled=transpile(qc,basis_gates = basis_gates)
         
@@ -108,36 +106,62 @@ def quantum_circuit_generator(samples: int,num_qubits: int,max_depth: int,shots:
         temp_no_noise_curcuit=from_qbits_to_probability_vector(counts = no_noise_counts,num_qubits = num_qubits,shots = shots)
         no_noise_circuits.append(temp_no_noise_curcuit)
         
-        if(i+1) % 200==0:
-            print(f" --> Ολοκληρώθηκαν  {i+1}/{samples} δείγματα ")
-        
     noise_tensor=torch.tensor(np.array(noise_circuits),dtype = torch.float32)
     no_noise_tensor=torch.tensor(np.array(no_noise_circuits),dtype = torch.float32)  
     
     return noise_tensor,no_noise_tensor    
 
+def rl_quantum_circuit_generator(samples: int = 5000,num_qubits :int = 4,max_depth: int = 100,shots: int = 1024):
+    from quantum_env import QuantumCircuitEnv
+    from double_dqn import DuelingDQN
+    
+    env = QuantumCircuitEnv(num_qubits=num_qubits, max_depth=max_depth)
+    
+    rl_agent = DuelingDQN(state_dim=16, action_dim=env.action_dim)
+    try:
+        rl_agent.load_state_dict(torch.load("dueling_dqn_quantum.pt"))
+        rl_agent.eval()
+    except Exception:
+        print(" Warning: Could not load dueling_dqn_quantum.pt, using randomly sampled RL trajectories.")
+
+    noisy_circuits = []
+    no_noise_circuits = []
+    
+    state = env.reset()
+    
+    for i in range(samples):
+        with torch.no_grad():
+            if np.random.rand() < 0.1: action = np.random.randint(0,env.action_dim)
+            else:
+                state_tensor = state if isinstance(state, torch.Tensor) else torch.tensor(state, dtype=torch.float32)
+                if state_tensor.dim() == 1: state_tensor = state_tensor.unsqueeze(0)
+                q_values = rl_agent(state_tensor)
+                action = torch.argmax(q_values, dim=-1).item()
+        
+        noisy_probs_tensor, _, done = env.step(action)
+        
+        clean_probs = np.abs(env.state) ** 2
+        clean_probs /= np.sum(clean_probs)
+        
+        noisy_np = noisy_probs_tensor.numpy() if isinstance(noisy_probs_tensor, torch.Tensor) else noisy_probs_tensor
+        
+        noisy_circuits.append(noisy_np)
+        no_noise_circuits.append(clean_probs)
+        
+        state = env.reset() if done else noisy_probs_tensor
+
+    return (torch.tensor(np.array(noisy_circuits), dtype=torch.float32), 
+            torch.tensor(np.array(no_noise_circuits), dtype=torch.float32))
 def main():
     eg_samples=5000
     eg_num_qubits=4
-    eg_max_depth=8
+    eg_max_depth=100
     eg_batch_size=32
     
     noise_train , no_noise_train = quantum_circuit_generator(samples=eg_samples,num_qubits=eg_num_qubits,max_depth=eg_max_depth,shots=1024)
     
-    print(f"\n Το Dataset δημιουργήθηκε επιτυχώς!")
-    print(f"X_train Shape (Noisy Input):  {noise_train.shape}")  
-    print(f"Y_train Shape (Clean Target): {no_noise_train.shape}")  
-    
-    print(f"Clean Tensor Sum: {torch.sum(no_noise_train[0]).item():.4f}") # Τυπώνει 1.0000
-    print(f"Noisy Tensor Sum: {torch.sum(noise_train[0]).item():.4f}")    # Τυπώνει 1.0000 
-    
     qc_dataset=TensorDataset(noise_train,no_noise_train)
     train_loader=DataLoader(qc_dataset,batch_size = eg_batch_size,shuffle = True)
     
-    for noise_qc_batch, no_noise_qc_batch in train_loader:
-        print(f"\nBatch Input Shape:  {noise_qc_batch.shape}")
-        print(f"Batch Target Shape: {no_noise_qc_batch.shape}")
-        break
-
 if __name__ == "__main__":
     main()
